@@ -16,6 +16,7 @@
     - [Claude Code](./presets/claude-code.md)
     - [GitHub Copilot CLI](./presets/copilot-cli.md)
     - [OpenAI Codex](./presets/openai-codex.md)
+    - [opencode](./presets/opencode.md)
 - [Secrets management](./secrets.md)
 - [Tips and tricks](./tips.md)
     - [Pairing with mise](./tips/mise.md)

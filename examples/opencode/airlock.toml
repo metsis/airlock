@@ -1,0 +1,13 @@
+presets = ["opencode"]
+
+[vm]
+# Local image built from opencode.dockerfile. With the default
+# resolution = "auto", airlock finds it in the local Docker daemon — no
+# registry or login needed.
+image = "opencode-sandbox:local"
+
+[network]
+# deny-by-default (NOT deny-always) so the opencode preset's guest→host port
+# forwards to the local inference server still work while all other egress
+# stays blocked.
+policy = "deny-by-default"

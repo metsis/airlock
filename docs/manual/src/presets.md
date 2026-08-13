@@ -55,6 +55,10 @@ expects, and an example `airlock.toml`:
 - [Claude Code](./presets/claude-code.md)
 - [GitHub Copilot CLI](./presets/copilot-cli.md)
 - [OpenAI Codex](./presets/openai-codex.md)
+- [opencode](./presets/opencode.md) — runs against a **local inference
+  server on the host** (Ollama / LM Studio / llama.cpp) rather than a cloud
+  API, so it forwards host ports into the sandbox instead of opening egress
+  and injecting a credential.
 
 Missing a preset for your favourite agent? PRs welcome — the presets live
 as small TOML files under `app/airlock-cli/src/config/presets/`.
