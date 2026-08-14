@@ -1,49 +1,92 @@
 # opencode
 
 The `opencode` preset bundles the sandbox setup for the
-[opencode CLI](https://opencode.ai) running against a **local inference
-server on the host** — Ollama, LM Studio, or llama.cpp. Instead of talking
-to a cloud provider, opencode reaches a model server running on your own
-machine, and no API key ever enters the sandbox.
+[opencode CLI](https://opencode.ai) running against **cloud model
+providers** — Anthropic, OpenAI, OpenRouter, Google, Groq, and the 75+
+others opencode supports through the AI SDK. This is the general-purpose
+opencode preset: pick any provider, log in, and go.
 
-Unlike the cloud agent presets, this one opens no outbound network access.
-airlock stays deny-by-default; the only thing it lets through is a
-loopback bridge to the inference server already running on your host.
+opencode is provider-agnostic, so there is no single API host to allow-list
+and no host credential to inject. The preset instead opens outbound network
+by default and lets opencode manage its own authentication — you log in once
+inside the sandbox and the credential persists across runs.
+
+> Want a fully local, no-egress agent instead? The
+> [`opencode-local`](./opencode-local.md) preset runs opencode against a
+> local inference server on the host (Ollama / LM Studio / llama.cpp) and
+> opens **no** outbound network at all. It's the privacy-first choice.
 
 ## What the preset does
 
-- **Reaches the host model server with the network otherwise denied.**
-  The preset forwards the common inference ports from the host into the
-  sandbox, so `localhost:<port>` inside the VM transparently reaches the
-  server on your host. Guest → host port forwards bypass network rules
-  entirely, so this works even under `deny-by-default` while every other
-  destination stays blocked. Forwarded by default:
+- **Opens egress by default.** opencode reaches whichever provider you
+  configure, pulls model metadata from `models.dev`, and fetches any
+  provider SDK it doesn't already bundle from npm on first use. The preset
+  sets `policy = "allow-by-default"`, so all of that works out of the box
+  while explicit `deny` rules are still honoured (see
+  [Locking egress down](#locking-egress-down)).
 
-  | Server      | Port    |
-  | ----------- | ------- |
-  | Ollama      | `11434` |
-  | LM Studio   | `1234`  |
-  | llama.cpp   | `8080`  |
+- **Keeps you logged in.** `~/.local/share/opencode` (sessions, projects,
+  and the `auth.json` written by `opencode auth login`) is mapped to
+  `~/.airlock/opencode/data/` on the host, so your provider logins survive
+  between runs.
 
-- **Seeds a starter config.** `~/.config/opencode/opencode.json` is created
-  (only if missing) with an OpenAI-compatible provider entry for each of the
-  three servers, pointing at `http://localhost:<port>/v1`. Edit the model
-  IDs to match what you have pulled/loaded on the host.
+- **Persists your config.** The global config
+  `~/.config/opencode/opencode.json` is mapped to
+  `~/.airlock/opencode/opencode.json` on the host and seeded minimally — no
+  provider block is required, since opencode discovers cloud providers from
+  `models.dev` plus your login. Edit it on the host to pin a default `model`
+  or add custom providers; your changes persist.
 
-- **Persists your session data.** `~/.local/share/opencode` (sessions,
-  projects, `auth.json`) is mapped to `~/.airlock/opencode/data/` on the
-  host, and the seeded config to `~/.airlock/opencode/opencode.json`, so both
-  carry over between runs.
+## Authentication
 
-## Requires `deny-by-default`, not `deny-always`
+No API key is taken from the host environment. Instead, log in **inside the
+sandbox** the first time:
 
-The host port forwards this preset relies on are blocked by
-`policy = "deny-always"`, which denies *everything* including forwards and
-sockets. Use `deny-by-default` (the recommended policy) so the loopback
-bridge to your inference server works while all real network egress stays
-denied.
+```bash
+airlock start --monitor -- opencode auth login
+```
+
+Pick your provider, paste the key (or complete the OAuth flow), and opencode
+writes it to `auth.json` in the persisted data dir. Subsequent runs reuse it:
+
+```bash
+airlock start --monitor -- opencode
+```
+
+Because the credential lives only in the sandbox's persisted data dir, it is
+never exposed to the guest through an environment variable, and rotating or
+removing it is just an `opencode auth logout` (or deleting
+`~/.airlock/opencode/data/auth.json` on the host).
 
 ## Example `airlock.toml`
+
+```toml
+presets = ["opencode"]
+
+[vm]
+image = "..."   # an image with opencode installed
+```
+
+The preset already sets the network policy, so no `[network]` block is
+needed unless you want to tighten it.
+
+## Installing opencode
+
+opencode is not shipped in the stock image, so you supply it in the VM
+image. It's distributed as a single standalone binary that bundles its Bun
+runtime, so a minimal image with just the binary, `git`, and CA certificates
+is enough — provider SDKs that aren't bundled are fetched from npm at run
+time, which the open egress policy allows. The ready-to-build image and
+Dockerfile in
+[`examples/opencode-local`](https://github.com/milankinen/airlock/tree/main/examples/opencode-local)
+work unchanged for cloud use; only the preset and network policy differ.
+
+## Locking egress down
+
+`allow-by-default` opens all outbound network, which is convenient across
+opencode's many providers but broader than airlock's usual deny-by-default
+posture. If you only use one provider, you can lock egress down to just what
+opencode needs by overriding the policy in your project config:
 
 ```toml
 presets = ["opencode"]
@@ -51,55 +94,29 @@ presets = ["opencode"]
 [network]
 policy = "deny-by-default"
 
-[vm]
-image = "..."   # an image with opencode installed
+[network.rules.opencode-anthropic]
+allow = [
+    "api.anthropic.com:443",
+    "models.dev:443",           # model metadata
+]
 ```
 
-## Installing opencode
+Add the API host(s) for your provider (for example `api.openai.com:443` or
+`openrouter.ai:443`) and `models.dev:443`. If opencode needs a provider SDK
+it doesn't bundle, also allow the npm registry (or add the `nodejs` preset)
+for the one-time fetch — or pre-install the package in your image.
 
-opencode is not shipped in the stock image, so you supply it in the VM
-image. It's distributed as a single standalone binary that bundles both its
-Bun runtime **and** the `@ai-sdk/openai-compatible` provider, so an
-OpenAI-compatible local server (Ollama / LM Studio / llama.cpp) works with
-**no network beyond the host model server** — nothing is fetched from npm at
-run time. A ready-to-build image and Dockerfile are in
-[`examples/opencode`](https://github.com/milankinen/airlock/tree/main/examples/opencode).
+## Adding or pinning providers
 
-> Providers whose npm package is *not* bundled (some plugins, less common
-> providers) are still fetched from npm on first use. For those, pre-install
-> the package in your image, or add the `nodejs` preset so the one-time fetch
-> can reach the registry.
+opencode discovers configured providers automatically, but you can pin a
+default model or register a custom provider by editing the persisted config
+on the host at `~/.airlock/opencode/opencode.json`:
 
-If opencode complains about model metadata, it may be trying to reach
-`models.dev`. It is not required for a configured local provider, but you
-can allow it explicitly if needed:
-
-```toml
-[network.rules.opencode-models-registry]
-allow = ["models.dev:443"]
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-4-5"
+}
 ```
 
-## Running it
-
-```bash
-airlock start --monitor -- opencode
-```
-
-Pick a model from one of the seeded providers (for example the Ollama
-provider). If the seeded model IDs don't match what's available on the
-host, edit `~/.airlock/opencode/opencode.json` on the host — your changes
-persist and the sandbox picks them up on the next run.
-
-## Adjusting the forwarded ports
-
-If you only run one server — or a port collides with something else — disable
-the ones you don't need rather than forwarding all three. Note that `8080`
-(llama.cpp) is a common host dev port; while it's forwarded, guest
-`localhost:8080` reaches your host's `:8080` instead of anything in the
-sandbox.
-
-```toml
-# airlock.local.toml — forward only Ollama
-[network.ports.opencode-inference]
-host = [11434]
-```
+Your edits persist and the sandbox picks them up on the next run.

@@ -1,13 +1,14 @@
 presets = ["opencode"]
 
 [vm]
-# Local image built from opencode.dockerfile. With the default
-# resolution = "auto", airlock finds it in the local Docker daemon — no
-# registry or login needed.
+# Local image built from the opencode-local example's Dockerfile — the
+# opencode binary is identical for cloud and local use, only the preset and
+# network policy differ. With the default resolution = "auto", airlock finds
+# it in the local Docker daemon — no registry or login needed.
 image = "opencode-sandbox:local"
 
-[network]
-# deny-by-default (NOT deny-always) so the opencode preset's guest→host port
-# forwards to the local inference server still work while all other egress
-# stays blocked.
-policy = "deny-by-default"
+# No [network] block needed: the `opencode` preset already sets
+# policy = "allow-by-default" so opencode can reach whichever cloud provider
+# you log in to, models.dev, and npm. Add a [network] block here only if you
+# want to lock egress down to a single provider (see the opencode preset
+# chapter in the manual).

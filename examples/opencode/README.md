@@ -1,57 +1,34 @@
-# opencode with local inference
+# opencode with a cloud provider
 
-A minimal, self-contained image for running [opencode](https://opencode.ai)
-inside airlock against a **local inference server on the host** (Ollama, LM
-Studio, or llama.cpp) — with the network otherwise denied.
+Run [opencode](https://opencode.ai) inside airlock against a **cloud model
+provider** — Anthropic, OpenAI, OpenRouter, Google, and the 75+ others
+opencode supports. This is the general-purpose setup; for a fully local,
+no-egress alternative see [`../opencode-local`](../opencode-local).
 
-## Why a custom image
+## The image
 
-The stock airlock image doesn't ship opencode, so this image adds it. opencode
-is distributed as a single standalone binary that bundles both its Bun runtime
-**and** the `@ai-sdk/openai-compatible` provider, so an OpenAI-compatible local
-server works with **no network beyond the host model server** — nothing is
-fetched from npm at run time. That means it runs fine under airlock's
-`deny-by-default` policy with no cache to pre-warm.
-
-The [`opencode.dockerfile`](./opencode.dockerfile) is a two-stage build, split
-only to keep the runtime lean:
-
-- **builder** — downloads the opencode binary (needs network + `curl`).
-- **runtime** — a small glibc image (`debian:trixie-slim`) with just `git`,
-  CA certs, and the binary. No Node/Bun.
-
-Alpine/musl would shrink the base, but opencode has
-[known runtime issues on musl](https://github.com/sst/opencode/issues/649), and
-the ~100 MB opencode binary dominates the image size regardless, so glibc is the
-better trade-off.
-
-> **Note:** the bundled `@ai-sdk/openai-compatible` provider covers Ollama, LM
-> Studio, and llama.cpp. *Other* providers whose npm package is not bundled
-> (some plugins, less common providers) are still fetched from npm on first use
-> — for those you'd pre-install the package in the builder stage, or add the
-> `nodejs` preset so the one-time fetch can reach the registry.
-
-## Prerequisites
-
-A local inference server running on the host. For Ollama:
+opencode isn't in the stock airlock image, so you supply it. The image is
+**identical** to the local example's — the same standalone opencode binary
+works for both — so just build that Dockerfile:
 
 ```bash
-ollama serve                       # listens on 127.0.0.1:11434
-ollama pull qwen2.5-coder          # or whatever model you want
-```
-
-The `opencode` preset forwards the common host ports into the sandbox
-(`11434` Ollama, `1234` LM Studio, `8080` llama.cpp).
-
-## Build
-
-```bash
-docker build -t opencode-sandbox:local -f opencode.dockerfile .
+docker build -t opencode-sandbox:local -f ../opencode-local/opencode.dockerfile ../opencode-local
 ```
 
 Build on the same architecture your airlock VM uses (arm64 on Apple Silicon,
-which is Docker's default there). The build needs network; the resulting image
-does not.
+which is Docker's default there). The build needs network.
+
+## Log in
+
+The `opencode` preset injects no API key from the host. Instead you
+authenticate **inside the sandbox**, once — opencode persists the credential
+to `~/.airlock/opencode/data/` on the host, so later runs reuse it:
+
+```bash
+airlock start --monitor -- opencode auth login
+```
+
+Pick your provider and paste the key (or complete the OAuth flow).
 
 ## Run
 
@@ -60,21 +37,18 @@ airlock start --monitor -- opencode
 ```
 
 airlock finds `opencode-sandbox:local` in the local Docker daemon
-(`resolution = "auto"`), applies the `opencode` preset (host port forwards +
-config/data mounts), and starts opencode. Pick a model from one of the seeded
-providers — e.g. the Ollama one.
-
-## Customising the model
-
-The seeded [`opencode.json`](./opencode.json) lists placeholder models. To change
-them, edit the config the preset persists on the host at
-`~/.airlock/opencode/opencode.json` — your edits survive across runs. Make the
-model IDs match what you've pulled/loaded on the host.
+(`resolution = "auto"`), applies the `opencode` preset (open egress + config
+and data mounts), and starts opencode with your saved login.
 
 ## Notes
 
-- **`deny-by-default`, not `deny-always`.** The latter blocks port forwards too,
-  which would cut off the host inference server.
-- **Verify offline behaviour** by running the image with `--network none`; a
-  completion attempt will select the `ai-sdk` runtime and fail only on the
-  connection to the (unreachable) server — proving no npm fetch is needed.
+- **Egress is open by default.** The preset sets
+  `policy = "allow-by-default"` because opencode is provider-agnostic — it can
+  reach whichever provider you configure, pull model metadata from
+  `models.dev`, and fetch non-bundled provider SDKs from npm. To lock egress
+  down to a single provider, override the policy in
+  [`airlock.toml`](./airlock.toml) — see the opencode preset chapter in the
+  manual for a worked deny-by-default example.
+- **Pin a model** by editing `~/.airlock/opencode/opencode.json` on the host
+  (e.g. `"model": "anthropic/claude-sonnet-4-5"`); your edits persist across
+  runs.

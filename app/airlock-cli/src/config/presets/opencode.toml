@@ -1,62 +1,50 @@
-# opencode preset (local inference)
+# opencode preset (cloud inference)
 #
-# Runs the opencode CLI (https://opencode.ai) against a local inference server
-# on the HOST (Ollama / LM Studio / llama.cpp). Network is otherwise denied;
-# the guest→host port forwards below bypass the network policy so the sandbox
-# reaches the host server at localhost:<port> while all other egress stays
-# blocked. (Requires deny-by-default, NOT deny-always.)
+# Runs the opencode CLI (https://opencode.ai) against cloud model providers —
+# Anthropic, OpenAI, OpenRouter, Google, Groq, and the 75+ others opencode
+# supports through the AI SDK. opencode is provider-agnostic, so instead of
+# allow-listing a single API host this preset opens egress by default: it can
+# reach whichever provider you configure, pull model metadata from models.dev,
+# and fetch any non-bundled provider SDK from npm on first use.
+#
+# Authenticate once inside the sandbox with `opencode auth login`; the
+# credential is written to the persisted data dir below and reused on later
+# runs. No API key is injected from the host.
+#
+# For a privacy-first setup that opens NO egress and only talks to a local
+# inference server on the host, use the `opencode-local` preset instead.
+
+[network]
+# opencode talks to whichever provider you pick, so egress is open by default.
+# `allow-by-default` still honours explicit deny rules, so you can carve out
+# blocked hosts, or switch to `deny-by-default` + explicit allows if you only
+# ever use one provider and want to lock egress down.
+policy = "allow-by-default"
 
 [env]
-# opencode (Bun/Node) trusts this CA for any HTTPS it makes. Local inference
-# over http://localhost is a passthrough forward and unaffected either way.
+# opencode (Bun/Node) trusts this CA bundle for HTTPS. It is the system public
+# root store, so providers' real certificates validate as-is; it also means
+# that if you later add auth middleware, airlock's interception CA (installed
+# into the same store) is picked up without extra setup.
 NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt"
 
-# Expose the common host inference servers inside the sandbox. Guest→host
-# forwards bypass network rules, so these work even with all other network
-# denied. Disable any you don't run (`enabled = false`) to avoid shadowing
-# that host port inside the guest — note 8080 is a common host dev port.
-[network.ports.opencode-inference]
-host = [
-    11434,  # Ollama
-    1234,   # LM Studio
-    8080,   # llama.cpp (llama-server)
-]
-
-# Persist opencode's data dir (sessions, projects, auth.json) across runs.
+# Persist opencode's data dir (sessions, projects, auth.json) across runs so
+# you stay logged in to your providers.
 [mounts.opencode-data]
 source = "~/.airlock/opencode/data"
 target = "~/.local/share/opencode"
 missing = "create-dir"
 
-# Seed a starter global config pointing at the forwarded host servers.
-# Only written if missing; later edits persist on the host. Adjust the model
-# IDs to match what you have pulled/loaded on the host.
+# Persist opencode's global config across runs. Seeded minimally — opencode
+# discovers cloud providers from models.dev plus your login, so no provider
+# block is required here. Add a `model` / `provider` block on the host at the
+# source path below to pin a default; your edits persist across runs.
 [mounts.opencode-config]
 source = "~/.airlock/opencode/opencode.json"
 target = "~/.config/opencode/opencode.json"
 missing = "create-file"
 file_content = '''
 {
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (host)",
-      "options": { "baseURL": "http://localhost:11434/v1" },
-      "models": { "qwen2.5-coder:latest": { "name": "Qwen2.5 Coder" } }
-    },
-    "lmstudio": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "LM Studio (host)",
-      "options": { "baseURL": "http://localhost:1234/v1" },
-      "models": { "local-model": { "name": "LM Studio model" } }
-    },
-    "llamacpp": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "llama.cpp (host)",
-      "options": { "baseURL": "http://localhost:8080/v1" },
-      "models": { "local-model": { "name": "llama.cpp model" } }
-    }
-  }
+  "$schema": "https://opencode.ai/config.json"
 }
 '''
